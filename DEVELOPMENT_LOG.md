@@ -42,7 +42,10 @@ This log tracks the progress and milestones of the Cold Chain Monitoring System 
 - **Simulator Development**: Created `simulator/sensor_sim.py`.
     - Implemented random data generation with drift and spike modeling.
     - Simplified code to beginner-level procedural logic.
-- **Subscriber Development**: Created `subscriber/subscriber.py`.
-    - Implemented MQTT listener for `cold_chain/#`.
-    - Integrated threshold checking using `config/profiles.json`.
-    - Added InfluxDB storage logic (beginner-friendly version).
+- **Subscriber Development & Data Pipeline**: 
+    - Created `subscriber/subscriber.py` with beginner-friendly procedural logic.
+    - **Security**: Implemented `.env` for securing InfluxDB tokens and credentials.
+    - **Threshold Logic**: Added magnitude calculation and "Soft Limit" (3-consecutive failure) alert logic.
+    - **Metrics**: Integrated `pandas` to calculate rolling mean, standard deviation, and rate of change (`dT/dt`) in real-time.
+    - **Storage**: Standardized storage in InfluxDB with accurate sensor-side timestamps.
+- **Project Maturity**: Established `.gitignore` best practices for Python and secrets.
