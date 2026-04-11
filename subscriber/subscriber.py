@@ -1,18 +1,23 @@
 import json
 import paho.mqtt.client as mqtt
+import os
+from dotenv import load_dotenv
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
+
+# Load the .env file
+load_dotenv()
 
 # --- CONFIGURATION (Change these to match your setup) ---
 MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
 MQTT_TOPIC = "cold_chain/#"
 
-# InfluxDB Settings (Placeholders)
-INFLUX_URL = "http://localhost:8086"
-INFLUX_TOKEN = "YOUR_INFLUXDB_TOKEN"
-INFLUX_ORG = "YOUR_ORG"
-INFLUX_BUCKET = "cold_chain_data"
+# InfluxDB Settings (Reading from .env for security)
+INFLUX_URL = os.getenv("INFLUXDB_URL", "http://localhost:8086")
+INFLUX_TOKEN = os.getenv("INFLUXDB_TOKEN")
+INFLUX_ORG = os.getenv("INFLUXDB_ORG")
+INFLUX_BUCKET = os.getenv("INFLUXDB_BUCKET")
 
 # --- LOAD THRESHOLDS ---
 # We read the profiles.json file once at the beginning

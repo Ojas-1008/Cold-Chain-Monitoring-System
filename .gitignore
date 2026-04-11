@@ -40,3 +40,4 @@ logs/
 data/*.json
 !config/profiles.json
 *.log
+.env
