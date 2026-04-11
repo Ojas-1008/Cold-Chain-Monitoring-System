@@ -40,6 +40,9 @@ This log tracks the progress and milestones of the Cold Chain Monitoring System 
   - Added profiles for vaccines, fresh produce, frozen foods, and pharmaceuticals.
 - **Source Control**: Initialized Git repository and pushed to [GitHub](https://github.com/Ojas-1008/Cold-Chain-Monitoring-System).
 - **Simulator Development**: Created `simulator/sensor_sim.py`.
-  - Implemented random data generation with drift and spike modeling.
-  - Integrated `paho-mqtt` for real-time data publishing.
-  - Added Faker-based location tagging and unique sensor/shipment IDs.
+    - Implemented random data generation with drift and spike modeling.
+    - Simplified code to beginner-level procedural logic.
+- **Subscriber Development**: Created `subscriber/subscriber.py`.
+    - Implemented MQTT listener for `cold_chain/#`.
+    - Integrated threshold checking using `config/profiles.json`.
+    - Added InfluxDB storage logic (beginner-friendly version).
