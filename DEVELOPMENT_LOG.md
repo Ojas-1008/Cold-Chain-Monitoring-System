@@ -49,3 +49,17 @@ This log tracks the progress and milestones of the Cold Chain Monitoring System 
     - **Metrics**: Integrated `pandas` to calculate rolling mean, standard deviation, and rate of change (`dT/dt`) in real-time.
     - **Storage**: Standardized storage in InfluxDB with accurate sensor-side timestamps.
 - **Project Maturity**: Established `.gitignore` best practices for Python and secrets.
+
+## Test Run Results & Verification
+
+### 2026-04-12
+Successfully ran an end-to-end verification of the data pipeline:
+- **Subscriber Logs**:
+    - `Loading product profiles... Profiles loaded successfully!`
+    - `Connected to InfluxDB!`
+    - `Waiting for data and computing rolling metrics...`
+    - `[SENSOR-001] Temp: 3.99C | Avg(12): 4.07C | Delta: -0.02C`
+- **Simulator Logs**:
+    - `Connected to localhost successfully!`
+    - `Sent reading to cold_chain/SENSOR-001/readings: {...}`
+- **Metrics Verification**: Confirmed that `rolling_mean` and `rate_of_change` are correctly calculated and stored in InfluxDB after the 12-reading buffer is filled.
