@@ -1,6 +1,8 @@
 import json
 import paho.mqtt.client as mqtt
 import os
+import pandas as pd
+from collections import deque
 from dotenv import load_dotenv
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -19,12 +21,14 @@ INFLUX_TOKEN = os.getenv("INFLUXDB_TOKEN")
 INFLUX_ORG = os.getenv("INFLUXDB_ORG")
 INFLUX_BUCKET = os.getenv("INFLUXDB_BUCKET")
 
-# --- ALERT SETTINGS ---
-# This is our "Soft Limit". We only alert if there are 3 bad readings in a row.
+# --- ALERT & HISTORY SETTINGS ---
 MAX_FAILURES_ALLOWED = 3
-# This dictionary will keep track of how many bad readings each sensor has had
-# Example: {"SENSOR-001": 2, "SENSOR-002": 0}
 sensor_fail_counts = {}
+
+# We keep the last 12 readings for each sensor to calculate averages
+# A 'deque' is a special list that automatically removes the oldest item when it gets full
+HISTORY_SIZE = 12
+sensor_history = {}
 
 # --- LOAD THRESHOLDS ---
 print("Loading product profiles...")
@@ -50,68 +54,62 @@ def on_message(client, userdata, message):
     temp = reading["temperature_c"]
     humidity = reading["humidity_pct"]
     
-    # Use 'standard_vaccines' as our rulebook for now
-    profile = PROFILES["standard_vaccines"]
+    # --- 1. TRACK HISTORY FOR PANDAS ---
+    if sensor_id not in sensor_history:
+        # Create a new deque for this sensor if we haven't seen it before
+        sensor_history[sensor_id] = deque(maxlen=HISTORY_SIZE)
     
+    # Add the current temperature to our history
+    sensor_history[sensor_id].append(temp)
+    
+    # --- 2. CALCULATE ROLLING METRICS (Using Pandas) ---
+    # We turn our history list into a Pandas DataFrame (like a table)
+    history_list = list(sensor_history[sensor_id])
+    df = pd.DataFrame(history_list, columns=["temp"])
+    
+    rolling_mean = 0.0
+    rolling_std = 0.0
+    rate_of_change = 0.0
+    
+    # We can only calculate these if we have enough data
+    if len(history_list) >= 2:
+        # 'diff' shows the change from the last reading
+        rate_of_change = df["temp"].diff().iloc[-1]
+        
+    if len(history_list) == HISTORY_SIZE:
+        # Calculate the average and standard deviation of the last 12 readings
+        rolling_mean = df["temp"].mean()
+        rolling_std = df["temp"].std()
+    
+    # --- 3. CHECK THRESHOLDS ---
+    profile = PROFILES["standard_vaccines"]
     is_breach = False
-    breach_reason = ""
-    magnitude = 0.0
-
-    # 1. CHECK TEMPERATURE
-    if temp > profile["temp_max"]:
+    
+    if temp > profile["temp_max"] or temp < profile["temp_min"] or humidity > profile["humidity_max"]:
         is_breach = True
-        magnitude = temp - profile["temp_max"]
-        breach_reason = f"Temperature too high! (Over by {round(magnitude, 2)}C)"
-    elif temp < profile["temp_min"]:
-        is_breach = True
-        magnitude = profile["temp_min"] - temp
-        breach_reason = f"Temperature too low! (Under by {round(magnitude, 2)}C)"
-
-    # 2. CHECK HUMIDITY
-    if humidity > profile["humidity_max"]:
-        is_breach = True
-        # We don't overwrite the temp reason if it's already there, just add to it
-        breach_reason += f" Humidity too high! ({humidity}% > {profile['humidity_max']}%)"
-
-    # 3. SOFT LIMIT LOGIC (Consecutive bad readings)
-    if is_breach:
-        # If the sensor isn't in our list yet, start at 0
         if sensor_id not in sensor_fail_counts:
             sensor_fail_counts[sensor_id] = 0
-            
-        # Add 1 to the fail count
         sensor_fail_counts[sensor_id] += 1
-        
-        current_fails = sensor_fail_counts[sensor_id]
-        print(f"--- ALERT: {sensor_id} is out of range! (Failure {current_fails}/{MAX_FAILURES_ALLOWED}) ---")
-        
-        # Only fire a REAL alert if we hit the limit
-        if current_fails >= MAX_FAILURES_ALLOWED:
-            print(f"!!! CRITICAL ALERT: {sensor_id} has exceeded the soft limit !!!")
-            print(f"REASON: {breach_reason}")
     else:
-        # If the reading is GOOD, reset the counter to zero
         sensor_fail_counts[sensor_id] = 0
-        print(f"Reading from {sensor_id}: {temp}C, {humidity}% [OK]")
 
-    # 4. STORE TO INFLUXDB (Even if it's a breach, we want the data)
+    # --- 4. STORE TO INFLUXDB (Including our new Pandas metrics) ---
     if write_api:
         try:
-            # We create a "Point" which is like a single row in a spreadsheet
-            # Measurement name: "sensor_reading"
             point = Point("sensor_reading") \
                 .tag("sensor_id", sensor_id) \
                 .tag("shipment_id", reading["shipment_id"]) \
-                .tag("location", reading["location_tag"]) \
                 .field("temperature_c", float(temp)) \
                 .field("humidity_pct", float(humidity)) \
                 .field("battery_pct", float(reading["battery_pct"])) \
                 .field("is_breach", bool(is_breach)) \
-                .time(reading["timestamp"]) # Use the timestamp from the simulator
+                .field("rolling_mean", float(rolling_mean)) \
+                .field("rolling_std", float(rolling_std)) \
+                .field("rate_of_change", float(rate_of_change)) \
+                .time(reading["timestamp"])
             
-            # Send the point to our InfluxDB bucket
             write_api.write(bucket=INFLUX_BUCKET, record=point)
-            print(f"Stored data for {sensor_id} in InfluxDB.")
+            print(f"[{sensor_id}] Temp: {temp}C | Avg(12): {round(rolling_mean, 2)}C | Delta: {round(rate_of_change, 2)}C")
         except Exception as e:
             print(f"Failed to save to InfluxDB: {e}")
 
@@ -119,10 +117,9 @@ def on_message(client, userdata, message):
 mqtt_client = mqtt.Client()
 mqtt_client.on_message = on_message
 
-print(f"Connecting to MQTT Broker...")
 mqtt_client.connect(MQTT_BROKER, MQTT_PORT)
 mqtt_client.subscribe(MQTT_TOPIC)
-print("Waiting for data...")
+print("Waiting for data and computing rolling metrics...")
 
 try:
     mqtt_client.loop_forever()
