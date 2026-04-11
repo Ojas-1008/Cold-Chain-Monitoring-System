@@ -97,16 +97,21 @@ def on_message(client, userdata, message):
     # 4. STORE TO INFLUXDB (Even if it's a breach, we want the data)
     if write_api:
         try:
-            point = Point("sensor_readings") \
+            # We create a "Point" which is like a single row in a spreadsheet
+            # Measurement name: "sensor_reading"
+            point = Point("sensor_reading") \
                 .tag("sensor_id", sensor_id) \
                 .tag("shipment_id", reading["shipment_id"]) \
                 .tag("location", reading["location_tag"]) \
-                .field("temperature", float(temp)) \
-                .field("humidity", float(humidity)) \
-                .field("battery", float(reading["battery_pct"])) \
-                .field("is_breach", bool(is_breach))
+                .field("temperature_c", float(temp)) \
+                .field("humidity_pct", float(humidity)) \
+                .field("battery_pct", float(reading["battery_pct"])) \
+                .field("is_breach", bool(is_breach)) \
+                .time(reading["timestamp"]) # Use the timestamp from the simulator
             
+            # Send the point to our InfluxDB bucket
             write_api.write(bucket=INFLUX_BUCKET, record=point)
+            print(f"Stored data for {sensor_id} in InfluxDB.")
         except Exception as e:
             print(f"Failed to save to InfluxDB: {e}")
 
