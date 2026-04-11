@@ -1,0 +1,22 @@
+{
+  "standard_vaccines": {
+    "temp_min": 2.0,
+    "temp_max": 8.0,
+    "humidity_max": 80
+  },
+  "fresh_produce": {
+    "temp_min": 1.0,
+    "temp_max": 6.0,
+    "humidity_max": 90
+  },
+  "frozen_foods": {
+    "temp_min": -25.0,
+    "temp_max": -15.0,
+    "humidity_max": 60
+  },
+  "pharmaceuticals": {
+    "temp_min": 15.0,
+    "temp_max": 25.0,
+    "humidity_max": 60
+  }
+}
