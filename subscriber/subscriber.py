@@ -2,6 +2,7 @@ import json
 import paho.mqtt.client as mqtt
 import os
 import pandas as pd
+import requests
 from collections import deque
 from dotenv import load_dotenv
 from influxdb_client import InfluxDBClient, Point, WritePrecision
@@ -15,6 +16,9 @@ MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
 MQTT_TOPIC = "cold_chain/#"
 
+# API Settings for real-time dashboard broadcasting
+API_URL = "http://localhost:8000/broadcast"
+
 # InfluxDB Settings (Reading from .env)
 INFLUX_URL = os.getenv("INFLUXDB_URL", "http://localhost:8086")
 INFLUX_TOKEN = os.getenv("INFLUXDB_TOKEN")
@@ -24,9 +28,6 @@ INFLUX_BUCKET = os.getenv("INFLUXDB_BUCKET")
 # --- ALERT & HISTORY SETTINGS ---
 MAX_FAILURES_ALLOWED = 3
 sensor_fail_counts = {}
-
-# We keep the last 12 readings for each sensor to calculate averages
-# A 'deque' is a special list that automatically removes the oldest item when it gets full
 HISTORY_SIZE = 12
 sensor_history = {}
 
@@ -56,14 +57,10 @@ def on_message(client, userdata, message):
     
     # --- 1. TRACK HISTORY FOR PANDAS ---
     if sensor_id not in sensor_history:
-        # Create a new deque for this sensor if we haven't seen it before
         sensor_history[sensor_id] = deque(maxlen=HISTORY_SIZE)
-    
-    # Add the current temperature to our history
     sensor_history[sensor_id].append(temp)
     
-    # --- 2. CALCULATE ROLLING METRICS (Using Pandas) ---
-    # We turn our history list into a Pandas DataFrame (like a table)
+    # --- 2. CALCULATE ROLLING METRICS ---
     history_list = list(sensor_history[sensor_id])
     df = pd.DataFrame(history_list, columns=["temp"])
     
@@ -71,13 +68,9 @@ def on_message(client, userdata, message):
     rolling_std = 0.0
     rate_of_change = 0.0
     
-    # We can only calculate these if we have enough data
     if len(history_list) >= 2:
-        # 'diff' shows the change from the last reading
         rate_of_change = df["temp"].diff().iloc[-1]
-        
     if len(history_list) == HISTORY_SIZE:
-        # Calculate the average and standard deviation of the last 12 readings
         rolling_mean = df["temp"].mean()
         rolling_std = df["temp"].std()
     
@@ -93,23 +86,40 @@ def on_message(client, userdata, message):
     else:
         sensor_fail_counts[sensor_id] = 0
 
-    # --- 4. STORE TO INFLUXDB (Including our new Pandas metrics) ---
+    # --- 4. PREPARE FINAL DATA DATA ---
+    # Add our calculated metrics to the reading before sending it
+    reading["rolling_mean"] = round(float(rolling_mean), 2)
+    reading["rolling_std"] = round(float(rolling_std), 2)
+    reading["rate_of_change"] = round(float(rate_of_change), 2)
+    reading["is_breach"] = is_breach
+
+    # --- 5. BROADCAST TO DASHBOARD ---
+    try:
+        # We send a "POST" request to our API
+        # The API will then send it to all WebSocket clients
+        requests.post(API_URL, json=reading, timeout=1)
+    except Exception as e:
+        # If the API isn't running, we just ignore the error
+        pass
+
+    # --- 6. STORE TO INFLUXDB ---
     if write_api:
         try:
             point = Point("sensor_reading") \
                 .tag("sensor_id", sensor_id) \
                 .tag("shipment_id", reading["shipment_id"]) \
+                .tag("location", reading["location_tag"]) \
                 .field("temperature_c", float(temp)) \
                 .field("humidity_pct", float(humidity)) \
                 .field("battery_pct", float(reading["battery_pct"])) \
                 .field("is_breach", bool(is_breach)) \
-                .field("rolling_mean", float(rolling_mean)) \
-                .field("rolling_std", float(rolling_std)) \
-                .field("rate_of_change", float(rate_of_change)) \
+                .field("rolling_mean", reading["rolling_mean"]) \
+                .field("rolling_std", reading["rolling_std"]) \
+                .field("rate_of_change", reading["rate_of_change"]) \
                 .time(reading["timestamp"])
             
             write_api.write(bucket=INFLUX_BUCKET, record=point)
-            print(f"[{sensor_id}] Temp: {temp}C | Avg(12): {round(rolling_mean, 2)}C | Delta: {round(rate_of_change, 2)}C")
+            print(f"[{sensor_id}] Data synchronized with Dashboard and InfluxDB.")
         except Exception as e:
             print(f"Failed to save to InfluxDB: {e}")
 
@@ -119,7 +129,7 @@ mqtt_client.on_message = on_message
 
 mqtt_client.connect(MQTT_BROKER, MQTT_PORT)
 mqtt_client.subscribe(MQTT_TOPIC)
-print("Waiting for data and computing rolling metrics...")
+print("Waiting for data...")
 
 try:
     mqtt_client.loop_forever()

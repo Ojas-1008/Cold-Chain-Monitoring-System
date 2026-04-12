@@ -16,6 +16,14 @@ connected_clients = []
 def read_root():
     return {"message": "Cold Chain Monitoring API is running!"}
 
+# THE BROADCAST ENDPOINT
+# The subscriber will send data here using a POST request
+@app.post("/broadcast")
+async def receive_broadcast(data: dict):
+    # Call our broadcast_data function to send this to all WebSocket clients
+    await broadcast_data(data)
+    return {"message": "Data broadcast successfully!"}
+
 # THE WEBSOCKET ENDPOINT
 # This is the "secret doorway" our dashboard uses to talk to the API in real-time
 @app.websocket("/ws")

@@ -51,8 +51,10 @@ This log tracks the progress and milestones of the Cold Chain Monitoring System 
 - **Project Maturity**: Established `.gitignore` best practices for Python and secrets.
 - **API Development**: Created `api/main.py`.
     - Initialized FastAPI server with WebSocket support (`/ws` endpoint).
-    - Implemented a "Broadcast" system to track and update connected dashboard clients in real-time.
-    - Simplified code to beginner-level procedural logic for educational clarity.
+    - Added a `/broadcast` POST endpoint to bridge synchronous and asynchronous services.
+- **Service Integration**: Linked `subscriber/subscriber.py` to the API.
+    - Added automated broadcasts to the dashboard for every incoming sensor reading.
+    - Integrated rolling metrics into the broadcast payload.
 
 ## Test Run Results & Verification
 
