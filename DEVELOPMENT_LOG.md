@@ -49,6 +49,10 @@ This log tracks the progress and milestones of the Cold Chain Monitoring System 
     - **Metrics**: Integrated `pandas` to calculate rolling mean, standard deviation, and rate of change (`dT/dt`) in real-time.
     - **Storage**: Standardized storage in InfluxDB with accurate sensor-side timestamps.
 - **Project Maturity**: Established `.gitignore` best practices for Python and secrets.
+- **API Development**: Created `api/main.py`.
+    - Initialized FastAPI server with WebSocket support (`/ws` endpoint).
+    - Implemented a "Broadcast" system to track and update connected dashboard clients in real-time.
+    - Simplified code to beginner-level procedural logic for educational clarity.
 
 ## Test Run Results & Verification
 
