@@ -1,9 +1,18 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 import json
 
 # --- SETUP ---
-# Create our FastAPI application "app"
 app = FastAPI()
+
+# Add CORS support so our browser can talk to the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Allow everything for now (very beginner friendly)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # This list will keep track of everyone who is "connected" to our dashboard
 # It's like a guest list for a party

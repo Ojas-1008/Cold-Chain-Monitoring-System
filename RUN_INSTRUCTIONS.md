@@ -1,0 +1,58 @@
+# Running the Cold Chain Monitoring System
+
+Follow these steps in order to start the complete monitoring pipeline.
+
+## Prerequisites
+
+1.  **MQTT Broker**: Ensure an MQTT broker (like Mosquitto) is installed and running on `localhost:1883`.
+2.  **InfluxDB**: Ensure InfluxDB is installed and the `influxd.exe` server is running.
+3.  **Environment Variables**: Ensure your `.env` file is updated with the correct InfluxDB Token, Org, and Bucket.
+
+---
+
+## Step-by-Step Execution
+
+Open a separate terminal window/tab for each of the following components:
+
+### 1. Start the FastAPI Backend
+This service handles real-time data broadcasting via WebSockets.
+```powershell
+.\venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+*Accessible at: http://127.0.0.1:8000*
+
+### 2. Start the Data Subscriber
+This service listens to MQTT messages, calculates analytics, and saves data to InfluxDB.
+```powershell
+.\venv\Scripts\python.exe subscriber\subscriber.py
+```
+
+### 3. Start the Sensor Simulator
+This service generates simulated temperature and humidity data.
+```powershell
+.\venv\Scripts\python.exe simulator\sensor_sim.py
+```
+
+### 4. Start the Streamlit Dashboard (Frontend)
+This provides the visual monitoring interface.
+```powershell
+.\venv\Scripts\python.exe -m streamlit run dashboard\app.py
+```
+*Accessible at: http://localhost:8501*
+
+---
+
+## Service Overview
+
+| Component | Responsibility | Port |
+| :--- | :--- | :--- |
+| **InfluxDB** | Permanent Data Storage | 8086 |
+| **MQTT Broker** | Message Transport | 1883 |
+| **FastAPI** | Real-time Broadcast (WS) | 8000 |
+| **Streamlit** | User Interface | 8501 |
+
+## Troubleshooting
+
+*   **InfluxDB Connection Refused**: Check if `influxd.exe` is running and the port in `.env` matches.
+*   **MQTT Connection Failed**: Ensure your MQTT broker service is started.
+*   **Module Not Found**: Ensure you are running commands from the project root with the virtual environment activated.
