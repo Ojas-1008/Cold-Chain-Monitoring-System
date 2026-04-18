@@ -3,314 +3,265 @@ import pandas as pd
 import time
 import os
 import plotly.express as px
-import numpy as np
 from influxdb_client import InfluxDBClient
 from dotenv import load_dotenv
 
-# 1. LOAD CONFIGURATION
-# explicitly point to the .env in the parent directory so it always finds the tokens
-env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
-load_dotenv(dotenv_path=env_path)
+# 1. SETUP & CONFIGURATION
+# Load environment variables (like our InfluxDB token)
+load_dotenv()
 
-# Windows can sometimes fail to parse "localhost" to IPv4 (it tries IPv6 by mistake)
-# So we swap it strictly to 127.0.0.1
-INFLUX_URL = os.getenv("INFLUXDB_URL", "http://127.0.0.1:8086").replace("localhost", "127.0.0.1")
-INFLUX_TOKEN = os.getenv("INFLUXDB_TOKEN")
-INFLUX_ORG = os.getenv("INFLUXDB_ORG")
-INFLUX_BUCKET = os.getenv("INFLUXDB_BUCKET")
+# Database connection settings
+URL = os.getenv("INFLUXDB_URL", "http://127.0.0.1:8086").replace("localhost", "127.0.0.1")
+TOKEN = os.getenv("INFLUXDB_TOKEN")
+ORG = os.getenv("INFLUXDB_ORG")
+BUCKET = os.getenv("INFLUXDB_BUCKET")
 
-# 2. PAGE SETUP
-st.set_page_config(
-    page_title="Cold Chain Fleet Monitor",
-    page_icon="🧊",
-    layout="wide"
-)
+# Page display settings
+st.set_page_config(page_title="Cold Chain Monitor", page_icon="🧊", layout="wide")
 
-# Initialize Session State for Alerts
-if "alerts" not in st.session_state:
-    st.session_state.alerts = []
+# Initialize session state for reports if it doesn't exist
+if "report_data" not in st.session_state:
+    st.session_state.report_data = None
 
-st.title("🧊 Cold Chain Logistics Fleet Monitor")
+st.title("🧊 Cold Chain Fleet Monitor")
+st.write("Real-time tracking for temperature-sensitive cargo")
 st.markdown("---")
 
-# 3. DATABASE HELPER
-def fetch_influx_data():
+# 2. DATA FUNCTIONS
+
+def get_live_data():
+    """Fetches the last 1 hour of sensor readings from InfluxDB."""
     try:
-        client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+        client = InfluxDBClient(url=URL, token=TOKEN, org=ORG)
         query_api = client.query_api()
         
-        # Pull last 1 hour of data, pivot metrics into columns
-        query = f'''
-            from(bucket: "{INFLUX_BUCKET}")
+        # Flux query to get data and turn fields into columns
+        flux_query = f'''
+            from(bucket: "{BUCKET}")
             |> range(start: -1h)
             |> filter(fn: (r) => r._measurement == "sensor_reading")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         
-        result = query_api.query_data_frame(query)
+        df = query_api.query_data_frame(flux_query)
         client.close()
         
-        # query_data_frame can return a list of DataFrames (one per tag set)
-        if isinstance(result, list):
-            if len(result) == 0:
-                return pd.DataFrame()
-            df = pd.concat(result, ignore_index=True)
-        else:
-            df = result
+        if isinstance(df, list):
+            if len(df) == 0: return pd.DataFrame()
+            df = pd.concat(df, ignore_index=True)
 
-        if df.empty:
+        if df is None or df.empty:
             return pd.DataFrame()
 
-        # Rename _time to timestamp and drop InfluxDB internal columns
+        # Clean up the column names
         df = df.rename(columns={"_time": "timestamp"})
-        cols_to_drop = [c for c in ["result", "table", "_start", "_stop", "_measurement"] if c in df.columns]
-        df = df.drop(columns=cols_to_drop)
+        
+        # Remove internal InfluxDB columns that we don't need to see
+        bad_cols = ["result", "table", "_start", "_stop", "_measurement"]
+        df = df.drop(columns=bad_cols, errors="ignore")
 
-        # After concat, rows from different tables are sparse (NaNs in other field columns).
-        # Group by timestamp + sensor_id and take first non-NaN value per group to merge them.
-        if "sensor_id" in df.columns and "timestamp" in df.columns:
+        # Merge rows that have the same timestamp and sensor
+        if "sensor_id" in df.columns:
             df = df.groupby(["timestamp", "sensor_id"], as_index=False).first()
 
-        # Fill boolean is_breach NaNs with False
+        # Ensure we have a boolean for breaches
         if "is_breach" in df.columns:
             df["is_breach"] = df["is_breach"].fillna(False)
 
         return df
-
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"Error connecting to database: {e}")
         return pd.DataFrame()
 
-def fetch_breach_events():
-    """Queries for critical breach events logged in the last 24 hours."""
+def get_alerts():
+    """Fetches breach events from the last 24 hours."""
     try:
-        client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+        client = InfluxDBClient(url=URL, token=TOKEN, org=ORG)
         query_api = client.query_api()
         
-        # Pull last 24h of breach events
-        query = f'''
-            from(bucket: "{INFLUX_BUCKET}")
+        flux_query = f'''
+            from(bucket: "{BUCKET}")
             |> range(start: -24h)
             |> filter(fn: (r) => r._measurement == "breach_event")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         
-        result = query_api.query_data_frame(query)
+        df = query_api.query_data_frame(flux_query)
         client.close()
         
-        if isinstance(result, list):
-            if len(result) == 0: return pd.DataFrame()
-            df = pd.concat(result, ignore_index=True)
-        else:
-            df = result
+        if isinstance(df, list):
+            if len(df) == 0: return pd.DataFrame()
+            df = pd.concat(df, ignore_index=True)
             
         return df
-    except Exception:
+    except:
         return pd.DataFrame()
 
-def generate_report(shipment_id):
-    """Queries journey history, calculates logistics metrics (TWAT, breaches), and saves log."""
+def create_report(shipment_id):
+    """Calculates summary stats for a shipment and saves a CSV."""
     try:
-        client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+        client = InfluxDBClient(url=URL, token=TOKEN, org=ORG)
         query_api = client.query_api()
         
-        # Pull 30 days of history for this specific shipment
         query = f'''
-            from(bucket: "{INFLUX_BUCKET}")
+            from(bucket: "{BUCKET}")
             |> range(start: -30d)
             |> filter(fn: (r) => r.shipment_id == "{shipment_id}")
             |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         
-        result = query_api.query_data_frame(query)
+        df = query_api.query_data_frame(query)
         client.close()
         
-        if isinstance(result, list):
-            if len(result) == 0: return None
-            df = pd.concat(result, ignore_index=True)
-        else:
-            df = result
-            
+        if isinstance(df, list):
+            df = pd.concat(df, ignore_index=True)
+        
         if df.empty: return None
 
-        # 1. PREPARE DATA
+        # Sort by time so we can calculate durations
         df = df.sort_values("_time")
-        df["timestamp_seconds"] = pd.to_datetime(df["_time"]).view('int64') / 1e9
         
-        # 2. CALCULATE TIME-WEIGHTED AVG TEMP (TWAT)
-        # This is more accurate than a simple average for uneven sensor intervals
-        total_duration = df["timestamp_seconds"].iloc[-1] - df["timestamp_seconds"].iloc[0]
-        if total_duration > 0:
-            twat = np.trapz(df["temperature_c"], df["timestamp_seconds"]) / total_duration
-        else:
-            twat = df["temperature_c"].mean()
+        # Calculate Average Temp
+        avg_temp = df["temperature_c"].mean()
 
-        # 3. CALCULATE BREACH SUMMARY
-        # We assume each reading represents a 5-second window
-        out_of_range = df[df["is_breach"] == True]
-        total_breach_minutes = (len(out_of_range) * 5) / 60
-        verdict = "PASS ✅" if total_breach_minutes == 0 else "FAIL ❌"
+        # Calculate total breach time (assuming 5 seconds per reading)
+        breaches = df[df["is_breach"] == True]
+        breach_minutes = (len(breaches) * 5) / 60
+        
+        verdict = "PASS ✅" if breach_minutes == 0 else "FAIL ❌"
 
-        # 4. EXPORT CSV
-        df_export = df.rename(columns={"_time": "Timestamp"}).drop(columns=["timestamp_seconds"], errors="ignore")
-        cols_to_drop = [c for c in ["result", "table", "_start", "_stop", "_measurement"] if c in df_export.columns]
-        df_export = df_export.drop(columns=cols_to_drop)
-
+        # Save to CSV file
         os.makedirs("reports", exist_ok=True)
-        df_export.to_csv(f"reports/{shipment_id}_log.csv", index=False)
+        filename = f"reports/{shipment_id}_report.csv"
+        
+        # Clean export data
+        export_df = df.drop(columns=["result", "table", "_start", "_stop", "_measurement"], errors="ignore")
+        export_df.to_csv(filename, index=False)
         
         return {
-            "twat": round(twat, 2),
-            "breach_mins": round(total_breach_minutes, 1),
+            "avg_temp": round(avg_temp, 2),
+            "breach_mins": round(breach_minutes, 1),
             "verdict": verdict,
-            "path": f"reports/{shipment_id}_log.csv"
+            "file": filename
         }
     except Exception as e:
         st.error(f"Report Error: {e}")
         return None
 
-# 4. LIVE DASHBOARD LOOP
-placeholder = st.empty()
+# 3. BUILD THE DASHBOARD UI
 
-while True:
-    df = fetch_influx_data()
+# Get the latest data
+df = get_live_data()
+
+if not df.empty:
+    # --- Live Metrics for each sensor ---
+    st.subheader("🚚 Active Fleet Status")
+    all_sensors = df["sensor_id"].unique()
+    grid = st.columns(len(all_sensors))
     
-    with placeholder.container():
-        if not df.empty:
-            # --- PANEL 1: FLEET STATUS GRID ---
-            st.subheader("🚚 Fleet Status")
-            active_sensors = df["sensor_id"].unique()
-            cols = st.columns(len(active_sensors))
-            
-            for col, sensor_id in zip(cols, active_sensors):
-                # Get the latest data for this specific sensor
-                sensor_data = df[df["sensor_id"] == sensor_id].iloc[-1]
-                temp = sensor_data["temperature_c"]
-                is_breach = sensor_data["is_breach"]
-                product = sensor_data.get("product_type", "Unknown") # Get product name
-                
-                status_text = "🔴 Breach" if is_breach else "🟢 Safe"
-                
-                with col:
-                    st.metric(
-                        label=f"📦 {product.replace('_', ' ').title()} ({sensor_id})",
-                        value=f"{temp}°C",
-                        delta=status_text,
-                        delta_color="normal" if not is_breach else "inverse"
-                    )
-                
-                # Update Alert Feed if a breach is detected
-                if is_breach:
-                    # Check if we already logged this specific breach timestamp to avoid duplicates in the feed
-                    new_alert = {"time": str(sensor_data["timestamp"]), "sensor": sensor_id, "reading": f"{temp}°C"}
-                    if not st.session_state.alerts or st.session_state.alerts[-1] != new_alert:
-                        st.session_state.alerts.append(new_alert)
-
-            st.markdown("---")
-
-            # --- PANEL 2: TEMPERATURE TIME-SERIES ---
-            st.subheader("📈 Temperature Trend (Last 1h)")
-            fig = px.line(
-                df, 
-                x="timestamp", 
-                y="temperature_c", 
-                color="sensor_id",
-                title="Live Temperature Tracking by Sensor",
-                template="plotly_dark",
-                labels={"timestamp": "Time", "temperature_c": "Temp (°C)", "sensor_id": "Sensor"}
+    for i in range(len(all_sensors)):
+        s_id = all_sensors[i]
+        last_reading = df[df["sensor_id"] == s_id].iloc[-1]
+        
+        temp = last_reading["temperature_c"]
+        breach = last_reading["is_breach"]
+        product = last_reading.get("product_type", "Unknown")
+        # If the product name is missing (NaN), use "Unknown"
+        if not isinstance(product, str):
+            product = "Unknown"
+        
+        product = product.replace("_", " ").title()
+        
+        status = "🔴 BREACH" if breach else "🟢 SAFE"
+        
+        with grid[i]:
+            st.metric(
+                label=f"{product} ({s_id})",
+                value=f"{temp}°C",
+                delta=status,
+                delta_color="normal" if not breach else "inverse"
             )
-            st.plotly_chart(fig, use_container_width=True)
 
-            # --- PANEL 3: ANALYTICS & ALERTS ---
-            col_stats, col_alerts = st.columns([1, 1])
-            
-            with col_stats:
-                st.subheader("📊 Statistics Table")
-                # Group by both ID and Product Name for clearer visualization
-                group_cols = [c for c in ["sensor_id", "product_type"] if c in df.columns]
-                stats_df = df.groupby(group_cols)["temperature_c"].agg(["mean", "std", "min", "max"]).round(2)
-                st.dataframe(stats_df, use_container_width=True)
-                
-                st.subheader("🔋 Sensor Health")
-                health_cols = [c for c in ["sensor_id", "battery_pct", "health_score"] if c in df.columns]
-                # Get the latest health reading for each sensor
-                health_df = df.sort_values("timestamp").groupby("sensor_id")[health_cols].last()
-                
-                # Apply styling: Red background if health_score < 0.5
-                st.dataframe(
-                    health_df.style.apply(
-                        lambda x: ["background-color: #702121; color: white" if v < 0.5 else "" for v in x],
-                        subset=["health_score"]
-                    ),
-                    use_container_width=True
-                )
-                
-            with col_alerts:
-                st.subheader("🚨 Persistent Alert Feed")
-                alerts_df = fetch_breach_events()
-                
-                if alerts_df.empty:
-                    st.success("✅ No breaches detected in last 24h")
-                else:
-                    # Rename columns for a cleaner display
-                    if "_time" in alerts_df.columns:
-                        display_df = alerts_df.rename(columns={
-                            "_time": "Timestamp", 
-                            "sensor_id": "Sensor ID",
-                            "shipment_id": "Shipment", 
-                            "temperature_c": "Breach Temp", 
-                            "breach_magnitude": "Excess"
-                        })
-                        
-                        st.dataframe(
-                            display_df[["Timestamp", "Sensor ID", "Shipment", "Breach Temp", "Excess"]]
-                            .sort_values("Timestamp", ascending=False)
-                            .head(20),
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("Breach data is still synchronizing...")
+    st.markdown("---")
 
-            st.markdown("---")
-            
-            # --- PANEL 4: SHIPMENT MANAGEMENT ---
-            st.subheader("📋 Shipment Management")
-            col_sel, col_btn = st.columns([3, 1])
-            
-            if "shipment_id" in df.columns:
-                active_shipments = df["shipment_id"].unique()
-                with col_sel:
-                    selected_shipment = st.selectbox("Select Shipment to Finalize", active_shipments)
-                
-                with col_btn:
-                    st.write(" ") # Padding for alignment
-                    if st.button("Generate Report & End Shipment"):
-                        with st.spinner("Processing logistics history..."):
-                            report = generate_report(selected_shipment)
-                            if report:
-                                st.success(f"Log saved: {report['path']}")
-                                # Show a quick summary to the user
-                                m1, m2, m3 = st.columns(3)
-                                m1.metric("Final Verdict", report["verdict"])
-                                m2.metric("Avg. Temp (TWAT)", f"{report['twat']}°C")
-                                m3.metric("Breach Duration", f"{report['breach_mins']}m")
-                                
-                                # Add Download Button for the CSV
-                                with open(report["path"], "rb") as f:
-                                    st.download_button(
-                                        label="💾 Download Shipment Log (CSV)",
-                                        data=f,
-                                        file_name=f"{selected_shipment}_log.csv",
-                                        mime="text/csv"
-                                    )
-                            else:
-                                st.error("No historical data found for this ID.")
-            else:
-                st.warning("No shipment IDs found in the current data stream.")
+    # --- Charts ---
+    st.subheader("📈 Temperature History (Last 1 Hour)")
+    chart = px.line(
+        df, 
+        x="timestamp", 
+        y="temperature_c", 
+        color="sensor_id",
+        template="plotly_dark",
+        title="Real-time Sensor Movements"
+    )
+    st.plotly_chart(chart, use_container_width=True)
 
+    # --- Details & Alerts ---
+    left_col, right_col = st.columns(2)
+    
+    with left_col:
+        st.subheader("📊 Sensor Statistics")
+        # Simple groupby stats
+        stats = df.groupby("sensor_id")["temperature_c"].agg(["mean", "min", "max"]).round(2)
+        st.table(stats)
+        
+        st.subheader("🔋 Battery & Health")
+        if "battery_pct" in df.columns:
+            health = df.sort_values("timestamp").groupby("sensor_id")[["battery_pct", "health_score"]].last()
+            st.dataframe(health, use_container_width=True)
+        
+    with right_col:
+        st.subheader("🚨 Alert Log (Last 24h)")
+        alerts_df = get_alerts()
+        
+        if alerts_df.empty:
+            st.success("Everything is running normal!")
         else:
-            st.info("🔄 Waiting for sensor data... Ensure the Simulator and Subscriber are running.")
-            st.image("https://images.unsplash.com/photo-1580674285054-91550f40ad55?q=80&w=2070&auto=format&fit=crop", caption="Awaiting Logistics Data")
+            # Show only important columns
+            show_cols = ["_time", "sensor_id", "shipment_id", "temperature_c"]
+            available = [c for c in show_cols if c in alerts_df.columns]
+            st.dataframe(alerts_df[available].sort_values("_time", ascending=False).head(15), use_container_width=True)
 
-    # Refresh every 5 seconds
+    st.markdown("---")
+    
+    # --- Report Generation ---
+    st.subheader("📋 Finalize Shipment")
+    if "shipment_id" in df.columns:
+        ids = df["shipment_id"].unique()
+        choice = st.selectbox("Pick a shipment to close:", ids)
+        
+        if st.button("Generate Summary Report"):
+            info = create_report(choice)
+            if info:
+                st.session_state.report_data = info
+                st.session_state.active_shipment = choice
+
+        # Show the report if it was generated
+        if st.session_state.report_data:
+            report = st.session_state.report_data
+            st.write(f"### Report for {st.session_state.active_shipment}")
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Result", report["verdict"])
+            c2.metric("Average Temp", f"{report['avg_temp']}°C")
+            c3.metric("Time in Breach", f"{report['breach_mins']} mins")
+            
+            with open(report["file"], "rb") as f:
+                st.download_button("Download Full CSV Log", f, file_name=f"report_{choice}.csv")
+            
+            if st.button("Clear Report"):
+                st.session_state.report_data = None
+                st.rerun()
+    else:
+        st.write("No shipment data found yet.")
+
+else:
+    st.warning("Waiting for data... Please start your Simulator and Subscriber!")
+    st.image("https://images.unsplash.com/photo-1580674285054-91550f40ad55?auto=format&fit=crop&w=800")
+
+# --- AUTO REFRESH ---
+# Refresh the page every 5 seconds to get new data
+if st.session_state.report_data is None:
     time.sleep(5)
+    st.rerun()
+

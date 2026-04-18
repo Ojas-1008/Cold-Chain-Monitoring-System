@@ -1,32 +1,32 @@
-from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
 from influxdb_client import InfluxDBClient
 
 load_dotenv()
 
-url = os.getenv("INFLUXDB_URL", "http://127.0.0.1:8086").replace("localhost", "127.0.0.1")
-token = os.getenv("INFLUXDB_TOKEN")
-org = os.getenv("INFLUXDB_ORG")
-bucket = os.getenv("INFLUXDB_BUCKET")
+# Load settings from environment (.env)
+URL = os.getenv("INFLUXDB_URL", "http://127.0.0.1:8086")
+TOKEN = os.getenv("INFLUXDB_TOKEN")
+ORG = os.getenv("INFLUXDB_ORG")
+BUCKET = os.getenv("INFLUXDB_BUCKET")
 
-client = InfluxDBClient(url=url, token=token, org=org)
+# Connect to InfluxDB
+client = InfluxDBClient(url=URL, token=TOKEN, org=ORG) or exit("Failed to connect!")
 query_api = client.query_api()
 
-# Query absolutely everything in the bucket in the last 24 hours
-query = f'''
-from(bucket: "{bucket}")
-  |> range(start: -24h)
-'''
-
-print("=== ALL DATA IN BUCKET LAST 24H ===")
+# Query the last 24 hours of data
+query = f'from(bucket: "{BUCKET}") |> range(start: -24h)'
 result = query_api.query(query)
-tables = list(result)
-count = 0
-for table in tables:
-    for record in table.records:
-        count += 1
-        if count <= 10:
-            print(f"  sensor_id={record.values.get('sensor_id','N/A')} | field={record.get_field()} | val={record.get_value()} | time={record.get_time()}")
 
-print(f"\nTotal records: {count}")
+print("--- RECENT DATABASE RECORDS ---")
+total_count = 0
+
+for table in result:
+    for record in table.records:
+        total_count += 1
+        # Show a preview of the first 10 entries
+        if total_count <= 10:
+            print(f"[{record.get_time()}] {record.values.get('sensor_id')}: {record.get_field()} = {record.get_value()}")
+
+print(f"\nTotal records found: {total_count}")
 client.close()

@@ -2,32 +2,31 @@ import threading
 import time
 from sensor_sim import run_sensor
 
-def main():
-    sensors = [
-        {"id": "SENSOR-001", "shipment": "SHP-A", "profile": "standard_vaccines"},
-        {"id": "SENSOR-002", "shipment": "SHP-B", "profile": "fresh_produce"},
-        {"id": "SENSOR-003", "shipment": "SHP-C", "profile": "frozen_meat"},
-        {"id": "SENSOR-004", "shipment": "SHP-D", "profile": "pharmaceuticals"},
-        {"id": "SENSOR-005", "shipment": "SHP-E", "profile": "standard_vaccines"},
-    ]
+# List of sensors to simulate
+sensor_list = [
+    {"id": "SENSOR-001", "shipment": "SHP-ALPHA", "profile": "vaccines"},
+    {"id": "SENSOR-002", "shipment": "SHP-BETA", "profile": "food"},
+    {"id": "SENSOR-003", "shipment": "SHP-GAMMA", "profile": "meat"},
+    {"id": "SENSOR-004", "shipment": "SHP-DELTA", "profile": "medicine"},
+]
 
-    print(f"Launching {len(sensors)} sensors...")
+print("Starting Fleet Simulation...")
 
-    threads = []
-    for sensor in sensors:
-        t = threading.Thread(target=run_sensor, args=(sensor,))
-        t.daemon = True  # Stops with the main script
-        t.start()
-        threads.append(t)
-        time.sleep(0.5) # Brief delay between starts
+# Start a new thread for each sensor in the list
+for config in sensor_list:
+    # We use threading so they all run at the same time
+    thread = threading.Thread(target=run_sensor, args=(config,))
+    thread.daemon = True # This ensures they stop when the main script stops
+    thread.start()
+    print(f"Started {config['id']}")
+    time.sleep(1) # Wait a second before starting the next one
 
-    print("All sensors launched. Press Ctrl+C to stop all simulations.")
+print("\nAll sensors are running!")
+print("Press Ctrl+C to stop the simulation.\n")
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nStopping all sensors...")
-
-if __name__ == "__main__":
-    main()
+# Keep the script running forever (or until Ctrl+C)
+try:
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt:
+    print("\nShutting down sensors...")

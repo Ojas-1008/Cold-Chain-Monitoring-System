@@ -10,9 +10,20 @@ Follow these steps in order to start the complete monitoring pipeline.
 
 ---
 
-## Step-by-Step Execution
+## 🚀 One-Click Start (Recommended)
+The easiest way to start the entire system is using the provided batch script. It will open all 4 services in separate windows for you:
 
-Open a separate terminal window/tab for each of the following components:
+1.  Make sure your **MQTT Broker** and **InfluxDB** are already running.
+2.  Double-click `run_all.bat` in the project root.
+3.  Or run it from the terminal:
+    ```powershell
+    .\run_all.bat
+    ```
+
+---
+
+## Step-by-Step Execution (Manual)
+If you prefer to start them manually, open a separate terminal window for each:
 
 ### 1. Start the FastAPI Backend
 This service handles real-time data broadcasting via WebSockets.
@@ -28,9 +39,9 @@ This service listens to MQTT messages, calculates analytics, and saves data to I
 ```
 
 ### 3. Start the Sensor Simulator
-This service generates simulated temperature and humidity data.
+This service generates simulated temperature and humidity data for multiple sensors.
 ```powershell
-.\venv\Scripts\python.exe simulator\sensor_sim.py
+.\venv\Scripts\python.exe simulator\multi_sensor_sim.py
 ```
 
 ### 4. Start the Streamlit Dashboard (Frontend)

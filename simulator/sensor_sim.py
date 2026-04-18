@@ -4,92 +4,74 @@ import random
 from datetime import datetime
 import paho.mqtt.client as mqtt
 
-# --- GLOBAL CONFIGURATION ---
-BROKER = "localhost"
-PORT = 1883
-TOPIC_PREFIX = "cold_chain"
-INTERVAL = 5 # seconds between readings
+# -- SETTINGS --
+MQTT_BROKER = "127.0.0.1"
+MQTT_PORT = 1883
+TOPIC_BASE = "cold_chain"
 
-def run_sensor(sensor_config):
-    """
-    Simulates a single sensor sending data to MQTT.
-    sensor_config: dict with keys 'id', 'shipment', 'profile'
-    """
-    sensor_id = sensor_config.get("id", "UNKNOWN-SENSOR")
-    shipment_id = sensor_config.get("shipment", "UNKNOWN-SHIP")
-    product_type = sensor_config.get("profile", "standard_vaccines")
-    location = sensor_config.get("location", "Truck-101")
+def run_sensor(config):
+    # Get sensor info from the config dictionary
+    name = config.get("id", "S-000")
+    shipment = config.get("shipment", "Unknown")
+    product = config.get("profile", "vaccines")
+    
+    # Starting values for the simulation
+    temp = 4.0
+    humidity = 50.0
+    battery = 100.0
 
-    # Initial data
-    current_temp = 4.0
-    current_humidity = 50.0
-    battery_pct = 100.0
-
-    # Connect to the MQTT Broker
-    client = mqtt.Client() 
-    print(f"[{sensor_id}] Connecting to broker...")
+    # Create an MQTT client to send data
+    client = mqtt.Client()
+    
     try:
-        client.connect(BROKER, PORT)
-        print(f"[{sensor_id}] Connected to {BROKER} successfully!")
-    except Exception as e:
-        print(f"[{sensor_id}] Failed to connect to broker: {e}")
+        client.connect(MQTT_BROKER, MQTT_PORT)
+        print(f"[{name}] Connected to Broker.")
+    except:
+        print(f"[{name}] Connect failed! Is Mosquitto running?")
         return
 
-    print(f"[{sensor_id}] Starting simulation for {shipment_id}. Press Ctrl+C to stop.")
-
+    # THE MAIN LOOP: Runs until you stop the script
     try:
         while True:
-            # 1. CREATE DRIFT
-            drift = random.uniform(-0.05, 0.05)
-            current_temp = current_temp + drift
+            # 1. Simulating small temperature changes
+            temp = temp + random.uniform(-0.1, 0.1)
             
-            # 2. RANDOM SPIKES
+            # 2. Random temperature spikes (malfunctions)
             if random.random() < 0.05:
-                spike = random.uniform(3, 8)
-                current_temp = current_temp + spike
-                print(f"[{sensor_id}] !!! WARNING: Temperature spike detected !!!")
+                temp = temp + random.uniform(2, 5)
+                print(f"[{name}] Alert: Temp Spike!")
+
+            # 3. Battery drain
+            battery = battery - 0.1
+            if battery < 0: battery = 0
             
-            # 3. HUMIDITY CHANGE
-            current_humidity = current_humidity + random.uniform(-0.5, 0.5)
-            
-            # 4. BATTERY DRAIN
-            battery_pct = battery_pct - 0.05
-            if battery_pct < 0:
-                battery_pct = 0
-                
-            # 5. PREPARE THE DATA
-            reading = {
-                "sensor_id": sensor_id,
-                "shipment_id": shipment_id,
-                "product_type": product_type,
+            # 4. Prepare the message
+            data = {
+                "sensor_id": name,
+                "shipment_id": shipment,
+                "product_type": product,
                 "timestamp": datetime.now().isoformat(),
-                "temperature_c": round(current_temp, 2),
-                "humidity_pct": round(current_humidity, 2),
-                "location_tag": location,
-                "battery_pct": round(battery_pct, 2)
+                "temperature_c": round(temp, 2),
+                "humidity_pct": round(humidity, 2),
+                "battery_pct": round(battery, 2)
             }
             
-            # 6. SEND THE DATA
-            json_payload = json.dumps(reading)
-            topic = f"{TOPIC_PREFIX}/{sensor_id}/readings"
+            # 5. Convert to JSON and send it
+            json_string = json.dumps(data)
+            topic = f"{TOPIC_BASE}/{name}/readings"
             
-            client.publish(topic, json_payload)
-            print(f"[{sensor_id}] Sent reading to {topic}: {json_payload}")
+            client.publish(topic, json_string)
+            print(f"[{name}] Sent: {json_string}")
             
-            # 7. WAIT
-            time.sleep(INTERVAL)
+            # 6. Wait before sending the next one
+            time.sleep(5)
 
-    except (KeyboardInterrupt, SystemExit):
-        print(f"[{sensor_id}] Simulation stopped.")
-    finally:
+    except KeyboardInterrupt:
+        print(f"[{name}] Stopping...")
         client.disconnect()
 
+# If this file is run by itself (not by multi_sensor_sim)
 if __name__ == "__main__":
-    # Default behavior for single sensor if run directly
-    config = {
-        "id": "SENSOR-001",
-        "shipment": "SHIP-99",
-        "profile": "standard_vaccines"
-    }
-    run_sensor(config)
+    test_config = {"id": "TEST-1", "shipment": "SHP-1", "profile": "vaccines"}
+    run_sensor(test_config)
 
