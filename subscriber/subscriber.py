@@ -117,6 +117,7 @@ def process_message(client, userdata, message):
         p = Point("sensor_reading") \
             .tag("sensor_id", s_id) \
             .tag("shipment_id", reading["shipment_id"]) \
+            .tag("product_type", p_type) \
             .field("temperature_c", float(temp)) \
             .field("is_breach", bool(is_breach)) \
             .field("health_score", float(health))

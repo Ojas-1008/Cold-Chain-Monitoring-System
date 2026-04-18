@@ -11,9 +11,9 @@ Follow these steps in order to start the complete monitoring pipeline.
 ---
 
 ## 🚀 One-Click Start (Recommended)
-The easiest way to start the entire system is using the provided batch script. It will open all 4 services in separate windows for you:
+The easiest way to start the entire system is using the provided batch script. It will now automatically launch **InfluxDB** and all 4 services in separate windows:
 
-1.  Make sure your **MQTT Broker** and **InfluxDB** are already running.
+1.  Make sure your **MQTT Broker** (Mosquitto) is already running in the background.
 2.  Double-click `run_all.bat` in the project root.
 3.  Or run it from the terminal:
     ```powershell
@@ -24,6 +24,12 @@ The easiest way to start the entire system is using the provided batch script. I
 
 ## Step-by-Step Execution (Manual)
 If you prefer to start them manually, open a separate terminal window for each:
+
+### 0. Start InfluxDB
+Required for data storage.
+```powershell
+& "C:\Users\ojass\Downloads\influxd.exe"
+```
 
 ### 1. Start the FastAPI Backend
 This service handles real-time data broadcasting via WebSockets.

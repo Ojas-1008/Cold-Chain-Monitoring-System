@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 import os
+import json
 import plotly.express as px
 from influxdb_client import InfluxDBClient
 from dotenv import load_dotenv
@@ -22,6 +23,18 @@ st.set_page_config(page_title="Cold Chain Monitor", page_icon="🧊", layout="wi
 # Initialize session state for reports if it doesn't exist
 if "report_data" not in st.session_state:
     st.session_state.report_data = None
+
+# --- NEW: Function to load safety thresholds from our config file ---
+def load_product_profiles():
+    try:
+        with open("config/profiles.json", "r") as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"Could not load thresholds: {e}")
+        return {}
+
+# Load them once at the start
+PROFILES = load_product_profiles()
 
 st.title("🧊 Cold Chain Fleet Monitor")
 st.write("Real-time tracking for temperature-sensitive cargo")
@@ -170,13 +183,13 @@ if not df.empty:
         if not isinstance(product, str):
             product = "Unknown"
         
-        product = product.replace("_", " ").title()
+        product_label = product.replace("_", " ").title()
         
         status = "🔴 BREACH" if breach else "🟢 SAFE"
         
         with grid[i]:
             st.metric(
-                label=f"{product} ({s_id})",
+                label=f"{product_label} ({s_id})",
                 value=f"{temp}°C",
                 delta=status,
                 delta_color="normal" if not breach else "inverse"
@@ -186,14 +199,44 @@ if not df.empty:
 
     # --- Charts ---
     st.subheader("📈 Temperature History (Last 1 Hour)")
+    
+    chart_title = "Real-time Sensor Movements "
     chart = px.line(
         df, 
         x="timestamp", 
         y="temperature_c", 
         color="sensor_id",
         template="plotly_dark",
-        title="Real-time Sensor Movements"
+        title=chart_title
     )
+
+    # --- NEW: Add "Safety Zones" (Horizontal Limit Lines) ---
+    # We find which products are currently active in our data
+    active_products = df["product_type"].unique() if "product_type" in df.columns else []
+    
+    for prod_type in active_products:
+        if prod_type in PROFILES:
+            limits = PROFILES[prod_type]
+            label_name = prod_type.replace("_", " ").title()
+            
+            # Add Upper Limit Line
+            chart.add_hline(
+                y=limits["temp_max"], 
+                line_dash="dash", 
+                line_color="red",
+                annotation_text=f"{label_name} MAX ({limits['temp_max']}°C)",
+                annotation_position="top right"
+            )
+            
+            # Add Lower Limit Line
+            chart.add_hline(
+                y=limits["temp_min"], 
+                line_dash="dash", 
+                line_color="cyan",
+                annotation_text=f"{label_name} MIN ({limits['temp_min']}°C)",
+                annotation_position="bottom right"
+            )
+
     st.plotly_chart(chart, use_container_width=True)
 
     # --- Details & Alerts ---
