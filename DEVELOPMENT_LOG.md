@@ -285,5 +285,19 @@ Full end-to-end system verified with live InfluxDB integration:
 
 ---
 
+### 2026-04-19 (Continued)
+
+#### Bug Fix: Notification Message Logic
+- **Issue**: The `ntfy` notification service was hardcoded to send a "too hot" message for every temperature breach, even when the temperature was too cold (e.g., in frozen food shipments).
+- **Fix**: Updated `send_push_notification` in `subscriber/subscriber.py` to dynamically determine if the breach is "too hot" or "too cold" based on the current temperature relative to the product's safe range.
+- **Verification**: Confirmed the logic change correctly identifies high/low breaches and includes the accurate status in the push notification payload.
+
+#### Algorithmic Improvement: Bidirectional Prediction
+- **Feature**: Expanded the "Time-to-Breach" prediction engine to support cold breaches.
+- **Logic**: The system now detects negative temperature slopes and calculates the time remaining until the `temp_min` threshold is crossed.
+- **Benefit**: Provides proactive alerts for over-cooling scenarios, which is critical for products like vaccines that can be damaged by freezing.
+
+---
+
 ## Log Entries Conclusion
 *Last Updated: 2026-04-19*

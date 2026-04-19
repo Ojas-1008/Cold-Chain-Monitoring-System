@@ -59,6 +59,20 @@ This provides the visual monitoring interface.
 
 ---
 
+## 🔔 Testing Alerts (Ntfy.sh)
+To verify that the system correctly sends notifications during temperature breaches (e.g., "Too Hot" or "Too Cold"):
+
+1.  Set up your `NTFY_TOPIC` in the `.env` file.
+2.  Open a new terminal.
+3.  Run the notification tester:
+    ```powershell
+    .\venv\Scripts\python.exe simulator\demo_alerts.py
+    ```
+4.  Follow the interactive menu to trigger a **Hot Breach**, a **Cold Breach**, or both.
+    *   *Note: The script sends 3 consecutive readings to satisfy the threshold logic in the subscriber.*
+
+---
+
 ## Service Overview
 
 | Component | Responsibility | Port |

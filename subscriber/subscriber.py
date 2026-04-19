@@ -48,10 +48,13 @@ except:
 
 def send_push_notification(reading, profile):
     """Sends an alert to the phone via ntfy.sh"""
-    msg = f"ALERT: {reading['sensor_id']} is too hot! Current: {reading['temperature_c']}C"
+    temp = reading["temperature_c"]
+    status = "too hot" if temp > profile["temp_max"] else "too cold"
+    
+    msg = f"ALERT: {reading['sensor_id']} is {status}! Current: {temp}C"
     try:
         requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=msg.encode("utf-8"))
-        print("Push notification sent!")
+        print(f"Push notification sent: {msg}")
     except:
         print("Failed to send notification.")
 
@@ -113,20 +116,23 @@ def process_message(client, userdata, message):
         # Calculate the absolute change over the last 5 readings (covering ~25 seconds)
         recent_delta = history[-1] - history[-5]
         
-        # The 'rise_rate' per reading (5 seconds)
+        # The 'slope' per reading (5 seconds)
         # We divide by 4 because there are 4 intervals between 5 points
-        avg_rise_per_reading = recent_delta / 4
+        avg_slope_per_reading = recent_delta / 4
         
-        # We only care if the trend is upward and we haven't breached yet
-        if avg_rise_per_reading > 0 and not is_breach:
-            degrees_to_go = rules["temp_max"] - temp
-            
-            # 12 readings per minute
-            minutes_to_breach = degrees_to_go / (avg_rise_per_reading * 12)
-            
+        # Check for predictive breaches if we haven't breached yet
+        if not is_breach:
+            if avg_slope_per_reading > 0: # Trending HOT
+                degrees_to_go = rules["temp_max"] - temp
+                minutes_to_breach = degrees_to_go / (avg_slope_per_reading * 12)
+            elif avg_slope_per_reading < 0: # Trending COLD
+                degrees_to_go = temp - rules["temp_min"]
+                minutes_to_breach = degrees_to_go / (abs(avg_slope_per_reading) * 12)
+
             # DATA SCIENCE TIP: We add a 10% "Safety Margin" to be conservative.
             # It's better to warn the driver early than late.
-            minutes_to_breach = round(minutes_to_breach * 0.9, 1)
+            if minutes_to_breach != -1:
+                minutes_to_breach = round(minutes_to_breach * 0.9, 1)
 
     # -- Step 4.6: battery Life Prediction (NEW) --
     # "How many HOURS until the sensor runs out of power?"
