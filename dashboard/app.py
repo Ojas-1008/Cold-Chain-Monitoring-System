@@ -185,14 +185,29 @@ if not df.empty:
         
         product_label = product.replace("_", " ").title()
         
-        status = "🔴 BREACH" if breach else "🟢 SAFE"
+        # --- Prediction Logic ---
+        prediction = last_reading.get("minutes_to_breach", -1)
+        
+        # Determine the status label
+        # 1. If it's already in breach
+        if breach:
+            status = "🔴 BREACH"
+            color = "inverse"
+        # 2. If it's safe now, but predicted to breach soon (less than 120 mins)
+        elif 0 < prediction < 120:
+            status = f"⚠️ BREACH IN {prediction}m"
+            color = "off" # Streamlit doesn't have orange, but we can use 'off'
+        # 3. Everything is fine
+        else:
+            status = "🟢 SAFE"
+            color = "normal"
         
         with grid[i]:
             st.metric(
                 label=f"{product_label} ({s_id})",
                 value=f"{temp}°C",
                 delta=status,
-                delta_color="normal" if not breach else "inverse"
+                delta_color=color
             )
 
     st.markdown("---")
@@ -248,12 +263,42 @@ if not df.empty:
         stats = df.groupby("sensor_id")["temperature_c"].agg(["mean", "min", "max"]).round(2)
         st.table(stats)
         
-        st.subheader("🔋 Battery & Health")
+        st.subheader("🔋 Battery & Future Predictions")
         if "battery_pct" in df.columns:
-            health = df.sort_values("timestamp").groupby("sensor_id")[["battery_pct", "health_score"]].last()
-            st.dataframe(health, use_container_width=True)
-        
+            # Get latest battery and prediction info
+            cols = ["battery_pct", "hours_until_dead", "health_score", "minutes_to_breach"]
+            available = [c for c in cols if c in df.columns]
+            
+            latest_info = df.sort_values("timestamp").groupby("sensor_id")[available].last()
+            
+            # Clean up the names for the table
+            latest_info.columns = [c.replace("_", " ").title() for c in latest_info.columns]
+            # Replace -1 with "Calculating..."
+            if "Hours Until Dead" in latest_info.columns:
+                latest_info["Hours Until Dead"] = latest_info["Hours Until Dead"].apply(lambda x: f"{x}h" if x > 0 else "Calculating...")
+            
+            st.dataframe(latest_info, use_container_width=True)
+            
     with right_col:
+        st.subheader("🛡️ Category Safety Analysis")
+        # --- NEW: Simple Category Comparison ---
+        # We count how many breaches have happened per product type
+        if "product_type" in df.columns:
+            # Group by category and sum the breaches
+            category_stats = df.groupby("product_type")["is_breach"].sum().reset_index()
+            category_stats["product_type"] = category_stats["product_type"].str.replace("_", " ").str.title()
+            
+            fig = px.bar(
+                category_stats, 
+                x="product_type", 
+                y="is_breach",
+                labels={"is_breach": "Total Breaches", "product_type": "Product Category"},
+                template="plotly_dark",
+                color="product_type",
+                title="Risk Level by Product Category"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
         st.subheader("🚨 Alert Log (Last 24h)")
         alerts_df = get_alerts()
         

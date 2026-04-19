@@ -37,9 +37,15 @@ def run_sensor(config):
             temp = temp + random.uniform(-0.1, 0.1)
             
             # 2. Random temperature spikes (malfunctions)
+            # This simulates a cooling unit failure (hot) or a thermostat bug (cold)
             if random.random() < 0.05:
-                temp = temp + random.uniform(2, 5)
-                print(f"[{name}] Alert: Temp Spike!")
+                # 70% chance of a "Hot Spike", 30% chance of a "Cold Spike"
+                if random.random() < 0.7:
+                    temp = temp + random.uniform(2, 5)
+                    print(f"[{name}] Alert: High Temp Spike!")
+                else:
+                    temp = temp - random.uniform(2, 5)
+                    print(f"[{name}] Alert: Low Temp Drop!")
 
             # 3. Battery drain
             battery = battery - 0.1

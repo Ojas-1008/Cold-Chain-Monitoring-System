@@ -223,6 +223,67 @@ Full end-to-end system verified with live InfluxDB integration:
 
 ---
 
-## Log Entries Conclusion
-*Last Updated: 2026-04-18*
+### 2026-04-19 — Phase 8: UI Enhancement & Local Automation
 
+#### Step 8.1 — Visual Safety Zones (Charts)
+- **Feature Implementation**: Added horizontal reference lines to the Plotly charts in `dashboard/app.py`.
+- **Logic**: The dashboard now dynamically loads thresholds from `config/profiles.json` and draws dashed lines (Red for MAX, Cyan for MIN) for each active product type in the view.
+- **UX Improvement**: Users can now visually see how close a shipment is to a breach without needing to look up manual threshold tables.
+
+#### Step 8.2 — Fixing Product Labeling ("Unknown")
+- **Issue**: Sensors were appearing with the label "Unknown" in the dashboard fleet status.
+- **Root Cause**: The `subscriber/subscriber.py` Script was not writing the `product_type` field to InfluxDB, causing the dashboard query to return empty values for that column.
+- **Fix**: Updated the `Point` object in the subscriber to include `product_type` as a searchable **tag**.
+- **Verification**: Restarted the system and confirmed that labels like "Vaccines" and "Frozen Foods" are now correctly populating in the UI.
+
+#### Step 8.3 — Full System Automation (InfluxDB)
+- **Streamlining Development**: Updated `run_all.bat` to include the automatic startup of the InfluxDB server (`influxd.exe`) from the user's specific installation path.
+- **Sequencing**: Added a 3-second delay (`timeout /t 3`) to ensure the database starts before the data-heavy services attempt to connect.
+- **Documentation**: Updated `RUN_INSTRUCTIONS.md` to reflect that the system is now a true "one-click" setup.
+
+#### Step 8.4 — Version Control
+- **Persistence**: Committed all UI enhancements and infrastructure fixes to GitHub.
+- **Commit**: `Enhance dashboard with Visual Safety Zones and automate InfluxDB startup`.
+
+### 2026-04-19 — Phase 9: Predictive Analytics & Data Science
+#### Step 9.1 — Time-to-Breach Prediction Logic
+- **Innovation**: Upgraded the system from reactive monitoring to proactive prediction.
+- **Algorithm**: Implemented a linear trend calculation in `subscriber/subscriber.py` that compares the current temperature reading to the previous one to find the "Rate of Change."
+- **Prediction**: The system now calculates exactly how many minutes are left before a safe shipment hits the danger threshold.
+- **Persistence**: Integrated `minutes_to_breach` as a new field in the InfluxDB `sensor_reading` measurement.
+
+#### Step 9.2 — Predictive UI Alerts
+- **Dynamic Status**: Updated the Streamlit dashboard (`dashboard/app.py`) to show countdown timers (e.g., `⚠️ BREACH IN 15m`) in the fleet status grid.
+- **Health Panel**: Added a new prediction column to the Health & Battery panel for at-a-glance fleet forecasting.
+
+#### Step 9.3 — Data Science Documentation
+- **Guide Creation**: Authored `DATA_SCIENCE_&_ANALYTICS.md` to explain how complex concepts like Z-Scores, Rolling Windows, and Feature Engineering are applied in this real-world IoT context.
+- **Roadmap**: Defined bridge features for future AI integration, such as Battery Depletion Estimation and "Golden Batch" comparison.
+
+#### Step 9.4 — Battery Life Forecasting (EBD)
+- **Feature**: Implemented "Estimated Battery Depletion" (EBD) in `subscriber/subscriber.py`.
+- **Method**: Analyzes discharge slope to predict operational hours remaining.
+- **Goal**: Prevents "Dark Shipments" by alerting operators before a sensor dies.
+
+#### Step 9.5 — Comparative Risk Analytics
+- **Visual**: Added a "Risk Level by Category" bar chart to the dashboard.
+- **Concept**: Uses Pandas to aggregate breaches across all shipments of a specific category (e.g., Meat vs. Vaccines).
+- **Benefit**: Provides high-level logistics insights to identify systematic cooling failures in specific product lines.
+
+#### Step 9.6 — Bidirectional Malfunction Simulator
+- **Enhancement**: Updated `simulator/sensor_sim.py` to support "Low Temperature Drops" as well as high spikes.
+- **Logic**: Added a probability-based branch where sensors have a 30% chance of a "Cold Spike" during malfunctions, allowing testing of both `temp_min` and `temp_max` thresholds.
+
+#### Step 9.7 — Battery Data Persistence Fix
+- **Bug Fix**: Found and fixed a mismatch where `battery_pct` was being calculated in the subscriber but not written to InfluxDB.
+- **Result**: Restored full visibility of battery telemetry in the Streamlit "Battery & Future Predictions" panel.
+
+#### Step 9.8 — Algorithmic Refinement (Smoothing)
+- **Improvement**: Found that 2-point linear projection was too volatile for real-world scenarios.
+- **Logic**: Refactored the "Time-to-Breach" brain to use a **5-point window** (~25 seconds) to calculate the trend slope.
+- **Safety Heuristic**: Introduced a **0.9 safety multiplier** to create conservative, "worst-case" predictions for better risk management.
+
+---
+
+## Log Entries Conclusion
+*Last Updated: 2026-04-19*

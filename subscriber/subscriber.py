@@ -28,6 +28,8 @@ MAX_FAILURES = 3
 # Memory for sensors
 sensor_fail_counts = {}
 sensor_history = {} # Stores last 12 temperatures
+last_temperatures = {} # NEW: Stores ONLY the last temperature for trend analysis
+last_battery = {}      # NEW: Stores ONLY the last battery pct for trend analysis
 
 # Load product rules (min/max temps)
 with open("config/profiles.json", "r") as f:
@@ -101,10 +103,57 @@ def process_message(client, userdata, message):
     health = (battery * 0.8) + (20 if not is_breach else 0)
     health = round(health / 100, 2)
 
+    # -- Step 4.5: Time to Breach Prediction (Improved Algorithm) --
+    # "How many minutes until we hit the Danger Zone?"
+    # IMPROVEMENT: Instead of just the last 2 points, we look at the trend over the last 5 readings.
+    # This is "Smoothing"—it prevents the prediction from jumping wildly due to minor jitters.
+    minutes_to_breach = -1
+    
+    if len(history) >= 5:
+        # Calculate the absolute change over the last 5 readings (covering ~25 seconds)
+        recent_delta = history[-1] - history[-5]
+        
+        # The 'rise_rate' per reading (5 seconds)
+        # We divide by 4 because there are 4 intervals between 5 points
+        avg_rise_per_reading = recent_delta / 4
+        
+        # We only care if the trend is upward and we haven't breached yet
+        if avg_rise_per_reading > 0 and not is_breach:
+            degrees_to_go = rules["temp_max"] - temp
+            
+            # 12 readings per minute
+            minutes_to_breach = degrees_to_go / (avg_rise_per_reading * 12)
+            
+            # DATA SCIENCE TIP: We add a 10% "Safety Margin" to be conservative.
+            # It's better to warn the driver early than late.
+            minutes_to_breach = round(minutes_to_breach * 0.9, 1)
+
+    # -- Step 4.6: battery Life Prediction (NEW) --
+    # "How many HOURS until the sensor runs out of power?"
+    hours_until_dead = -1 # A value of -1 means "Not enough data yet"
+    
+    if s_id in last_battery:
+        prev_batt = last_battery[s_id]
+        # Calculate how much it dropped since 5 seconds ago
+        drop_rate = prev_batt - battery 
+        
+        # We only care if it's actually dropping
+        if drop_rate > 0:
+            # 12 readings-per-minute * 60 minutes = 720 readings per hour
+            readings_per_hour = 720
+            hours_until_dead = battery / (drop_rate * readings_per_hour)
+            hours_until_dead = round(hours_until_dead, 1)
+
+    # Save the current values for the NEXT prediction
+    last_temperatures[s_id] = temp
+    last_battery[s_id] = battery
+
     # -- Step 5: Update reading with new info --
     reading["rolling_mean"] = round(avg_temp, 2)
     reading["health_score"] = health
     reading["is_breach"] = is_breach
+    reading["minutes_to_breach"] = minutes_to_breach 
+    reading["hours_until_dead"] = hours_until_dead
 
     # -- Step 6: Send to Dashboard API --
     try:
@@ -119,13 +168,17 @@ def process_message(client, userdata, message):
             .tag("shipment_id", reading["shipment_id"]) \
             .tag("product_type", p_type) \
             .field("temperature_c", float(temp)) \
+            .field("battery_pct", float(battery)) \
             .field("is_breach", bool(is_breach)) \
-            .field("health_score", float(health))
+            .field("health_score", float(health)) \
+            .field("minutes_to_breach", float(minutes_to_breach)) \
+            .field("hours_until_dead", float(hours_until_dead))
         
         writer.write(bucket=BUCKET, record=p)
 
 # 4. START THE SUBSCRIBER
-subscriber = mqtt.Client()
+# We use CallbackAPIVersion.VERSION2 to avoid deprecation warnings
+subscriber = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 subscriber.on_message = process_message
 
 try:
