@@ -275,20 +275,16 @@ Step 2: TRANSPORT (Mosquitto Broker)
           │  MQTT Deliver
           ▼
 
-Step 3: PROCESSING (subscriber.py)
+Step 4: ENRICHMENT (subscriber.py)
 ───────────────────────────────────
   a) Parse JSON payload
   b) Append temp to rolling history (last 12 readings)
-  c) Calculate rolling mean:  avg = sum(history) / len(history)
-  d) Load product rules:  vaccines → min: 2°C, max: 8°C
-  e) Check breach:  4.05 < 8.0 AND 4.05 > 2.0 → ✅ SAFE
-  f) Calculate health score:  (99.5 × 0.8 + 20) / 100 = 1.0
-  g) Enrich the payload:
-      payload["rolling_mean"] = 4.03
-      payload["health_score"] = 1.0
-      payload["is_breach"] = False
-      payload["minutes_to_breach"] = 15.2 (5-point Smoothed Prediction)
-      payload["hours_until_dead"] = 14.5 (Battery Life Remaining)
+  c) Calculate rolling mean: avg = sum(history) / len(history)
+  d) Check breach status (Soft Limit: 3 consecutive failures)
+  e) **Calculate Health Score**: (battery × 0.8 + stability_bonus) / 100
+  f) **Smoothed Trend Analysis**: Calculate slope over last 5 readings to predict Time-to-Breach (TTB)
+  g) **Battery Life Prediction**: Calculate discharge rate to estimate hours of remaining operation (EBD)
+  h) Enrich the payload with metrics: `rolling_mean`, `health_score`, `is_breach`, `minutes_to_breach`, `hours_until_dead`
 
           │
           │  Forked into THREE outputs:
@@ -296,7 +292,7 @@ Step 3: PROCESSING (subscriber.py)
           │                         │                     │
           ▼                         ▼                     ▼
 
-Step 4a: BROADCAST              Step 4b: STORE          Step 4c: ALERT
+Step 5a: BROADCAST              Step 5b: STORE          Step 5c: ALERT
 (FastAPI /broadcast)            (InfluxDB)              (ntfy.sh)
                                                         (Only if breach
   HTTP POST with                Write Point:             count ≥ 3)
@@ -304,9 +300,9 @@ Step 4a: BROADCAST              Step 4b: STORE          Step 4c: ALERT
           │                     tags: sensor_id, shipment_id
           │                     fields: temperature_c,
           ▼                            is_breach,
-                                       health_score
-Step 5: DELIVERY
-(WebSocket /ws)
+                                       health_score,
+Step 6: DELIVERY                       minutes_to_breach,
+(WebSocket /ws)                        hours_until_dead
   FastAPI pushes JSON
   to all connected
   WebSocket clients
@@ -314,17 +310,14 @@ Step 5: DELIVERY
           │
           ▼
 
-Step 6: VISUALIZATION (dashboard/app.py)
+Step 7: VISUALIZATION (dashboard/app.py)
 ─────────────────────────────────────────
-  Streamlit queries InfluxDB every 5 seconds
-  and renders:
-  • Fleet status cards (🟢 SAFE / 🔴 BREACH / ⚠️ PREDICTION)
-  • Temperature history chart (Plotly)
-  • Risk Analysis Chart (Breaches by Product Category)
-  • Per-sensor statistics table (mean, min, max)
-  • Battery & health forecasting panel (Hours Remaining)
-  • Alert log (last 24 hours)
-  • Shipment report generator (PASS/FAIL + CSV)
+  Streamlit queries InfluxDB every 5 seconds and renders:
+  • **Fleet Status Cards**: Real-time status (🟢 SAFE / 🔴 BREACH / ⚠️ PREDICTION)
+  • **Safety Zone Chart**: Interactive Plotly graph with dynamic limit lines per product
+  • **Category Risk Analysis**: Bar chart showing breach frequencies across product types
+  • **Forecasting Panel**: Detailed table showing battery levels and "Hours Until Dead"
+  • **Compliance Report**: On-demand PASS/FAIL shipment audits with CSV export
 ```
 
 ### The Breach Detection Pipeline (Detailed)
@@ -454,15 +447,15 @@ sensor_history = {}       # Stores last 12 temperature readings per sensor
 
 Each incoming MQTT message triggers `process_message()`, which executes a **7-step pipeline**:
 
-| Step | Action | Code |
+| Step | Action | Description |
 |---|---|---|
-| 1 | **Track History** | Append temp to a list, keep only last 12 values |
-| 2 | **Calculate Rolling Mean** | `avg = sum(history) / len(history)` |
-| 3 | **Check Breach** | Compare temp against product-specific min/max from `profiles.json` |
-| 4 | **Calculate Health Score** | `health = (battery × 0.8 + stability_bonus) / 100` |
-| 5 | **Enrich Payload** | Add `rolling_mean`, `health_score`, `is_breach` to the reading |
-| 6 | **Broadcast to Dashboard** | HTTP POST to FastAPI `/broadcast` endpoint |
-| 7 | **Persist to Database** | Write InfluxDB Point with tags and fields |
+| 1 | **Buffer Management** | Updates the 12-reading rolling window (`sensor_history`) for noise reduction |
+| 2 | **Threshold Validation** | Compares reading against dynamically loaded `profiles.json` limits |
+| 3 | **Trend Smoothing** | Calculates temperature slope over the last 5 readings to filter out jitter |
+| 4 | **TTB Prediction** | Estimates "Time-to-Breach" (minutes) using a 10% safety margin / conservative heuristic |
+| 5 | **EBD Calculation** | Estimates "Estimated Battery Duration" (hours) based on discharge rate |
+| 6 | **Health Synthesis** | Calculates the 0-1.0 Health Score weighting battery life (80%) and safety (20%) |
+| 7 | **Multi-Sink Export** | Sends enriched data to FastAPI (WebSockets), InfluxDB (Storage), and ntfy (Alerts) |
 
 ##### The Breach Logic (Detailed):
 ```python
@@ -552,35 +545,24 @@ This is the visualization layer — a 311-line Streamlit application with 5 majo
 ```
 Dynamic grid that adapts to the number of active sensors. Each card shows the product type, latest temperature, and breach status.
 
-##### Panel 2: Temperature History Chart
-An interactive Plotly line chart showing the last 1 hour of readings for all sensors. Enhanced with:
-- **Safety zone lines** — dashed red (MAX) and cyan (MIN) lines per product type, loaded dynamically from `profiles.json`
-- **Dark theme** — `template="plotly_dark"` for professional appearance
-- **Interactive legend** — click sensor names to show/hide their traces
+##### Panel 2: Interactive History with Safety Zones
+An interactive Plotly line chart showing the last 1 hour of readings. Enhanced with:
+- **Dynamic Limit Overlays**: Automated rendering of `dash` lines representing the specific safety thresholds for the active shipment (Red = Max, Cyan = Min).
+- **Dark-Mode Aesthetics**: Consistent with professional monitoring control rooms.
 
-##### Panel 3: Sensor Statistics Table
-A grouped summary showing `mean`, `min`, and `max` temperature per sensor over the last hour.
+##### Panel 3: Category Risk Analysis
+A categorical bar chart that answers the question: *"Which products are failing most often?"*. It aggregates breach events across the fleet to highlight systematic logistics risks.
 
-##### Panel 4: Alert Log
-Queries InfluxDB for `breach_event` measurements from the last 24 hours and displays them in a sortable data table.
+##### Panel 4: Forecasting & Health Panel
+A data table that moves beyond raw status:
+- **Battery Projection**: Shows estimated hours remaining using the EBD algorithm.
+- **HP (Health Points)**: Visualizes the synthetic Health Score for each shipment.
 
-##### Panel 5: Shipment Report Generator
-```
-[Select Shipment: SHP-ALPHA ▾]  [Generate Summary Report]
-
-┌──────────┐  ┌──────────────┐  ┌────────────────┐
-│ Result   │  │ Average Temp │  │ Time in Breach │
-│ PASS ✅  │  │ 4.2°C        │  │ 0.0 mins       │
-└──────────┘  └──────────────┘  └────────────────┘
-
-[📥 Download Full CSV Log]
-```
-
-Queries the last 30 days of data for a shipment, calculates:
-- Average temperature
-- Total breach duration (in minutes)
-- PASS/FAIL verdict (PASS if 0 breach minutes)
-- Exports to CSV for compliance documentation
+##### Panel 5: Audit & Compliance Reporting
+Enables the "Close Shipment" workflow:
+- **Duration Calculation**: Precisely identifies the total minutes spent in a breached state.
+- **Automated Verdict**: Issues a definitive `PASS` or `FAIL` certificate based on compliance history.
+- **Audit Logs**: Generates CSV archives for regulatory submission.
 
 ##### Auto-Refresh Mechanism:
 ```python
